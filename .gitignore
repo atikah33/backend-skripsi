@@ -15,3 +15,7 @@ Thumbs.db
 # build
 dist/
 build/
+
+# Mengabaikan semua isi file di dalam folder uploads
+uploads/*
+!uploads/.gitkeep
