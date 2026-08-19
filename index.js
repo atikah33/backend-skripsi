@@ -313,7 +313,6 @@ app.post('/api/students/create', async (req, res) => {
 // --- API VALIDASI MANDIRI (UNTUK PANEL GURU) ---
 app.get('/api/teacher/attendance-validations', async (req, res) => {
   try {
-    // Mengambil data dari tabel absensi untuk divalidasi oleh guru
     const { data, error } = await supabase
       .from('absensi')
       .select('*');
@@ -325,6 +324,85 @@ app.get('/api/teacher/attendance-validations', async (req, res) => {
     console.error("Error fetching validations:", err);
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// --- API UPDATE STATUS VALIDASI ABSENSI MANDIRI (OTOMATIS SYNC STATUS) ---
+app.patch('/api/teacher/attendance-validations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status_validasi, catatan_guru, status_pengajuan_siswa } = req.body; 
+
+    if (!['valid', 'ditolak'].includes(status_validasi)) {
+      return res.status(400).json({ success: false, error: "Status validasi tidak valid" });
+    }
+
+    // Jika disetujui ('valid'), ikuti status pengajuan siswa (misal: 'izin', 'sakit'). 
+    // Jika ditolak ('ditolak'), otomatis ubah status harian menjadi 'alpha'.
+    const statusHarianBaru = status_validasi === 'valid' ? (status_pengajuan_siswa || 'izin') : 'alpha';
+
+    const { error: updateError } = await supabase
+      .from('absensi')
+      .update({
+        status_validasi: status_validasi,
+        catatan_guru: catatan_guru || null,
+        status: statusHarianBaru // Sinkronisasi otomatis ke absensi harian
+      })
+      .eq('id', id);
+
+    if (updateError) throw updateError;
+
+    res.json({ 
+      success: true, 
+      message: status_validasi === 'valid' ? "Absensi berhasil divalidasi!" : "Absensi ditolak dan otomatis diubah menjadi Alpha!" 
+    });
+
+  } catch (err) {
+    console.error("Update Validation Error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- API STATISTIK DISTRIBUSI SISWA PER KELAS ---
+app.get('/api/dashboard/distribusi-kelas', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('students')
+      .select('kelas');
+
+    if (error) throw error;
+
+    // Hitung jumlah siswa per kelas secara otomatis
+    const distribusi = {};
+    (data || []).forEach(item => {
+      const kelas = item.kelas || 'Belum Diatur';
+      distribusi[kelas] = (distribusi[kelas] || 0) + 1;
+    });
+
+    // Ubah ke format array agar mudah di-mapping di frontend
+    const result = Object.keys(distribusi).map(kelas => ({
+      kelas: kelas,
+      jumlah: distribusi[kelas]
+    }));
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error("Error distribusi kelas:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// 1. Agar Express membaca file statis hasil build React (pastikan folder 'public' berisi file build dist Anda)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 2. SPA Fallback: Semua rute selain /api akan diarahkan ke index.html supaya React Router tidak 404
+app.get(/^(?!\/api).*/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Penanganan route tidak ditemukan agar tetap JSON
